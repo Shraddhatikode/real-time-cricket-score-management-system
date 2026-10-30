@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cricket Live</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--mut:#94a3b8;--acc:#22c55e;--red:#ef4444;--amb:#f59e0b}
+@media (prefers-color-scheme:light){:root{--bg:#f1f5f9;--card:#fff;--line:#e2e8f0;--txt:#0f172a;--mut:#64748b}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--txt)}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 8px}h3{font-size:12px;margin:16px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+#conn{font-size:13px;color:var(--mut)}#conn::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amb);margin-right:6px}
+#conn.on::before{background:var(--acc)}
+main{display:grid;gap:16px;padding:16px;max-width:1200px;margin:auto;grid-template-columns:1fr}
+@media (min-width:900px){main{grid-template-columns:340px 1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.mc{cursor:pointer;margin-bottom:10px}.mc.sel{border-color:var(--acc)}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.mut{color:var(--mut);font-size:13px}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
+.badge.LIVE{color:var(--red);border-color:var(--red)}.badge.COMPLETED{color:var(--acc);border-color:var(--acc)}
+.big{font-size:38px;font-weight:700;line-height:1.1}.big small{font-size:16px;font-weight:400;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:5px 4px;text-align:right}td:first-child,th:first-child{text-align:left}
+th{color:var(--mut);font-weight:500;font-size:12px}
+ul{list-style:none;margin:0;padding:0;max-height:320px;overflow:auto}
+li{padding:6px 0;border-bottom:1px solid var(--line);display:flex;gap:10px}
+li b{min-width:38px;color:var(--mut)}li span{margin-left:auto;color:var(--mut);white-space:nowrap}
+li.w{color:var(--red)}li.b{color:var(--acc)}
+button,select,input{font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--txt)}
+button{cursor:pointer;background:var(--acc);color:#052e16;border:0;font-weight:600}
+.grid2{display:grid;gap:16px;grid-template-columns:1fr}@media (min-width:700px){.grid2{grid-template-columns:1fr 1fr}}
+form{display:grid;gap:6px;margin-top:10px}
+</style>
+</head>
+<body>
+<header><h1>🏏 Cricket Live</h1><span id="conn">connecting…</span></header>
+<main>
+  <section>
+    <h3 style="margin-top:0">Matches</h3>
+    <div id="list"></div>
+    <div class="card"><h3 style="margin-top:0">New match</h3>
+      <form id="newm">
+        <select id="ta"></select><select id="tb"></select>
+        <input id="ven" value="Local Ground" aria-label="Venue">
+        <input id="ov" type="number" min="1" max="50" value="10" aria-label="Overs">
+        <button>Create</button><span class="mut" id="err"></span>
+      </form>
+    </div>
+  </section>
+  <section>
+    <div class="card" id="detail"><span class="mut">Select a match…</span></div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-top:0">Commentary</h3><ul id="feed"></ul></div>
+      <div class="card"><h3 style="margin-top:0">Match summary</h3><div id="sum" class="mut">—</div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-top:0">Top batters</h3><div id="bat"></div></div>
+      <div class="card"><h3 style="margin-top:0">Top bowlers</h3><div id="bowl"></div></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const st = { matches: new Map(), sel: null, feed: [] };
+
+async function api(path, opts) {
+  const r = await fetch('/api' + path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+const post = (p, body) => api(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+
+function renderList() {
+  const w = { LIVE: 0, UPCOMING: 1, COMPLETED: 2 };
+  $('#list').innerHTML = [...st.matches.values()].sort((a, b) => w[a.status] - w[b.status] || b.id - a.id).map(m => `
+    <div class="card mc ${m.id === st.sel ? 'sel' : ''}" data-id="${m.id}">
+      <div class="row"><b>${esc(m.teamA)} v ${esc(m.teamB)}</b><span class="badge ${m.status}">${m.status}</span></div>
+      <div class="row mut"><span>${esc(m.venue)}</span><span>${m.totalOvers} ov</span></div>
+      ${m.status === 'UPCOMING' ? '' : `<div class="row"><span>${esc(m.battingTeam)}</span><b>${m.score} <span class="mut">(${m.overs})</span></b></div>`}
+      ${m.result ? `<div class="mut">${esc(m.result)}</div>` : ''}
+    </div>`).join('');
+}
+
+function renderDetail() {
+  const m = st.matches.get(st.sel);
+  if (!m) return;
+  let h = `<div class="row"><h2>${esc(m.teamA)} v ${esc(m.teamB)}</h2><span class="badge ${m.status}">${m.status}</span></div>
+    <div class="mut">${esc(m.venue)} · ${m.totalOvers} overs</div>`;
+  if (m.status === 'UPCOMING') {
+    h += `<p><button id="start">Start match</button></p>`;
+  } else {
+    h += `<p class="big">${esc(m.battingTeam)} ${m.score} <small>(${m.overs} ov)</small></p>
+      <div class="mut">CRR ${m.runRate}${m.target ? ` · Target ${m.target}` : ''}${m.requiredRate != null ? ` · RRR ${m.requiredRate}` : ''}</div>
+      ${m.firstInnings ? `<div class="mut">1st innings: ${esc(m.firstInnings)}</div>` : ''}
+      ${m.result ? `<p><b>${esc(m.result)}</b></p>` : ''}`;
+  }
+  if (m.striker) h += `<table><tr><th>Batting</th><th>R</th><th>B</th></tr>
+      <tr><td>${esc(m.striker.name)} *</td><td>${m.striker.runs}</td><td>${m.striker.balls}</td></tr>
+      <tr><td>${esc(m.nonStriker.name)}</td><td>${m.nonStriker.runs}</td><td>${m.nonStriker.balls}</td></tr></table>
+    <table><tr><th>Bowling</th><th>O</th><th>R</th><th>W</th></tr>
+      <tr><td>${esc(m.bowler.name)}</td><td>${m.bowler.overs}</td><td>${m.bowler.runs}</td><td>${m.bowler.wickets}</td></tr></table>`;
+  $('#detail').innerHTML = h;
+  const s = $('#start'); if (s) s.onclick = () => post(`/matches/${m.id}/start`).catch(e => alert(e.message));
+}
+
+function renderFeed() {
+  $('#feed').innerHTML = st.feed.map(e =>
+    `<li class="${e.wicket ? 'w' : e.batRuns >= 4 ? 'b' : ''}"><b>${e.overNo}.${e.ballNo}</b>${esc(e.commentary)}<span>${esc(e.scoreAfter)}</span></li>`
+  ).join('') || '<span class="mut">No balls bowled yet</span>';
+}
+
+async function loadSummary() {
+  if (st.sel == null) return;
+  const s = await api(`/matches/${st.sel}/summary`);
+  $('#sum').innerHTML = !s.innings1 ? 'Not started' : `
+    <div>${esc(s.innings1)}</div>${s.innings2 ? `<div>${esc(s.innings2)}</div>` : ''}
+    ${s.result ? `<p><b>${esc(s.result)}</b></p>` : ''}
+    <p>4s: ${s.fours} · 6s: ${s.sixes} · Extras: ${s.extras}<br>
+    ${s.topBatter ? `Top scorer: ${esc(s.topBatter)} (${s.topBatterRuns})` : ''}</p>
+    ${s.fallOfWickets.length ? `<div>Fall of wickets</div>` + s.fallOfWickets.map(f => `<div>${esc(f)}</div>`).join('') : ''}`;
+}
+
+async function select(id) {
+  st.sel = id;
+  st.feed = await api(`/matches/${id}/commentary?limit=30`);
+  renderList(); renderDetail(); renderFeed(); loadSummary();
+}
+
+async function loadLeaders() {
+  const l = await api('/players/leaders');
+  const tbl = (rows, a, b) => `<table>${rows.map(p => `<tr><td>${esc(p.name)}<div class="mut">${esc(p.team)}</div></td><td>${p[a]}</td><td class="mut">${p[b]}</td></tr>`).join('')}</table>`;
+  $('#bat').innerHTML = tbl(l.topBatters, 'runs', 'strikeRate');
+  $('#bowl').innerHTML = tbl(l.topBowlers, 'wickets', 'economy');
+}
+
+// ---- real-time updates (Server-Sent Events; browser auto-reconnects)
+function connect() {
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { $('#conn').textContent = 'live'; $('#conn').className = 'on'; };
+  es.onerror = () => { $('#conn').textContent = 'reconnecting…'; $('#conn').className = ''; };
+  es.addEventListener('score', ev => {
+    const { match, ball } = JSON.parse(ev.data);
+    st.matches.set(match.id, match);
+    renderList();
+    if (match.id === st.sel) {
+      if (ball) { st.feed.unshift(ball); st.feed.length = Math.min(st.feed.length, 30); }
+      renderDetail(); renderFeed();
+      if (!ball || ball.wicket || match.status === 'COMPLETED') loadSummary();
+    }
+  });
+}
+
+$('#list').onclick = e => { const c = e.target.closest('.mc'); if (c) select(+c.dataset.id); };
+$('#newm').onsubmit = async e => {
+  e.preventDefault(); $('#err').textContent = '';
+  try {
+    const m = await post('/matches', { teamA: $('#ta').value, teamB: $('#tb').value, venue: $('#ven').value, overs: +$('#ov').value });
+    st.matches.set(m.id, m); select(m.id);
+  } catch (err) { $('#err').textContent = err.message; }
+};
+
+(async () => {
+  const teams = await api('/teams');
+  $('#ta').innerHTML = teams.map(t => `<option>${esc(t)}</option>`).join('');
+  $('#tb').innerHTML = $('#ta').innerHTML; $('#tb').selectedIndex = 1;
+  (await api('/matches')).forEach(m => st.matches.set(m.id, m));
+  renderList();
+  const first = [...st.matches.values()].find(m => m.status === 'LIVE') || [...st.matches.values()][0];
+  if (first) select(first.id);
+  loadLeaders(); setInterval(loadLeaders, 10000);
+  connect();
+})();
+</script>
+</body>
+</html>
